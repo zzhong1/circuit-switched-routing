@@ -43,11 +43,41 @@ time_last_send = Time.new(0)
 
 loop do
 	time_now = Time.now
-
+	#send
+	if(time_now - time_last_send > 20)
+		send_sockets.each do |ss,ip|
+			f = File.open("output.txt", "r")
+			weight = 0
+			other_ip = ""
+			f.each_line do |line|
+				if line =~ /([0-9]+.[0-9]+.[0-9]+.[0-9]+),([0-9]+.[0-9]+.[0-9]+.[0-9]+),([0-9]+)/
+          weight = $3
+	 				if ip.eql? $1
+	 					other_ip = $2
+	 				end
+	 				if ip.eql?$2
+	 					other_ip = $1
+	 				end
+	 			end
+			end
+			f.close
+			key = ip + " " + other_ip
+			#puts "ip : #{ip}"
+			#puts "other ip : #{other_ip}"
+			#puts "weight: #{weight}"
+			flood_table[key] = weight
+			#puts flood_table.inspect
+			String msg = ""
+			msg << ip << "&destination" << "&flooding&"<< flood_table.inspect
+			ss.send(msg, 0, MULTICAST_ADDR, PORT)
+		end
+		time_last_send = time_now
+	end
+	#recv
 	a = IO.select([recvSocket,ARGF],nil,nil,0)
 	
 	if a
-  	msg_recv = recvSocket.recvfrom(1024)
+  	msg_recv = recvSocket.recvfrom(2048)
   	own_ip = false
   	send_sockets.each do |k,ip|
   		if (ip.eql? msg_recv[1][2])
@@ -78,7 +108,10 @@ loop do
 				end
 			end
 		end
+		#puts "flood_table start:"
 		#puts flood_table.inspect
+		#puts "flood_table end"
+		
 		puts "-------------------------------------------------------------"
 		send_sockets.each do |ss, ip|
 			graph = Graph.new(ip,flood_table);
@@ -92,37 +125,7 @@ loop do
 			end
 			puts "#{ip} shortest paths finished"
 		end
-		puts "--------------------------------------------------------------"		
-	end
-
-	if(time_now - time_last_send > 3)
-		send_sockets.each do |ss,ip|
-			f = File.open("output.txt", "r")
-			weight = 0
-			other_ip = ""
-			f.each_line do |line|
-				if line =~ /([0-9]+.[0-9]+.[0-9]+.[0-9]+),([0-9]+.[0-9]+.[0-9]+.[0-9]+),([0-9]+)/
-          weight = $3
-	 				if ip.eql? $1
-	 					other_ip = $2
-	 				end
-	 				if ip.eql?$2
-	 					other_ip = $1
-	 				end
-	 			end
-			end
-			f.close
-			key = ip + " " + other_ip
-			#puts "ip : #{ip}"
-			#puts "other ip : #{other_ip}"
-			#puts "weight: #{weight}"
-			flood_table[key] = weight
-			#puts flood_table.inspect
-			String msg = ""
-			msg << ip << "&destination" << "&flooding&"<< flood_table.inspect
-			ss.send(msg, 0, MULTICAST_ADDR, PORT)
-		end
-		time_last_send = time_now
+		puts "--------------------------------------------------------------"
 	end
 end
 

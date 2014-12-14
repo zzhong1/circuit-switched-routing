@@ -40,6 +40,7 @@ recvSocket.bind(BIND_ADDR, PORT)
 
 flood_table={}
 time_last_send = Time.new(0)
+all_paths_all_ips={}
 
 loop do
 	time_now = Time.now
@@ -67,65 +68,259 @@ loop do
 			#puts "weight: #{weight}"
 			flood_table[key] = weight
 			#puts flood_table.inspect
-			String msg = ""
+			msg = ""
 			msg << ip << "&destination" << "&flooding&"<< flood_table.inspect
 			ss.send(msg, 0, MULTICAST_ADDR, PORT)
 		end
 		time_last_send = time_now
 	end
 	#recv
-	a = IO.select([recvSocket,ARGF],nil,nil,0)
+
+	results = IO.select([recvSocket,ARGF],nil,nil,0)
 	
-	if a
-  	msg_recv = recvSocket.recvfrom(2048)
-  	own_ip = false
-  	send_sockets.each do |k,ip|
-  		if (ip.eql? msg_recv[1][2])
-  			own_ip = true
-  		end
-  	end
-		if (!own_ip)
-			msg_to_array = msg_recv[0].split("&")
-	  	source = msg_to_array[0]
-			is_flood = msg_to_array[2].eql? "flooding"
-			routing_table = eval(msg_to_array[3])
-			if (is_flood)
-				merge_table = flood_table.merge routing_table
-				#puts merge_table.inspect
-				#puts flood_table.inspect
-				#if (!flood_table.include? source)
-				#puts "recieve flood"
-				send_sockets.each do |ss,ip|
-					if(merge_table != flood_table)
-						String msg = ""
-						msg << ip << "&destination" << "&flooding&"<< merge_table.inspect
-						if(ss.send(msg, 0, MULTICAST_ADDR, PORT)<0)
-							puts "sending failed"
+	if results
+		if results[0].include? recvSocket
+	  	msg_recv = recvSocket.recvfrom(2048)
+	  	own_ip = false
+	  	send_sockets.each do |k,ip|
+	  		if (ip.eql? msg_recv[1][2])
+	  			own_ip = true
+	  		end
+	  	end
+			if (!own_ip)
+				msg_to_array = msg_recv[0].split("&")
+		  	source = msg_to_array[0]
+		  	destination = msg_to_array[1]
+				is_flood = msg_to_array[2].eql? "flooding"
+				is_send = msg_to_array[2].eql? "SENDMSG"
+				is_ping = msg_to_array[2].eql? "PING"
+				is_pingback = msg_to_array[2].eql? "PINGBACK"
+				content = msg_to_array[3]
+				num_pings = msg_to_array[4].to_i
+				delay = msg_to_array[5].to_i
+				if (is_flood)
+					routing_table = eval(content)
+					merge_table = flood_table.merge routing_table
+					#puts merge_table.inspect
+					#puts flood_table.inspect
+					#if (!flood_table.include? source)
+					#puts "recieve flood"
+					send_sockets.each do |ss,ip|
+						if(merge_table != flood_table)
+							String msg = ""
+							msg << ip << "&destination" << "&flooding&"<< merge_table.inspect
+							if(ss.send(msg, 0, MULTICAST_ADDR, PORT)<0)
+								puts "sending failed"
+							end
+							#puts merge_table.inspect
+							flood_table =  merge_table
 						end
-						puts merge_table.inspect
-						flood_table =  merge_table
 					end
 				end
+				if is_send
+					ss,first_ip = send_sockets.first
+
+					if send_sockets.has_value?(destination)
+						puts "recieved " + content + " from " + source
+					else
+						#puts source
+						#puts all_paths_all_ips.inspect
+						path = all_paths_all_ips[first_ip][destination]
+						out_link_ip = ""
+						path.each_with_index do |p,index|
+							if !send_sockets.has_value? p
+								out_link_ip = path[index-1]
+								break
+							end
+						end
+						send_sockets.each do |k,v|
+							if v.eql? out_link_ip
+								ss = k
+							end
+						end
+						#puts "send "+content+" from "+source+ " to "+destination
+						ss.send(msg_recv[0], 0, MULTICAST_ADDR, PORT)		
+					end	
+				end
+				if is_ping
+					ss,first_ip = send_sockets.first
+
+					if send_sockets.has_value?(destination)
+						puts "PING #{source} " + (num_pings.to_s) + " times"
+						temp = destination
+							destination = source
+							source = temp
+							path = all_paths_all_ips[first_ip][destination]
+							out_link_ip = ""
+							path.each_with_index do |p,index|
+								if !send_sockets.has_value? p
+									out_link_ip = path[index-1]
+									break
+								end
+							end
+							send_sockets.each do |k,v|
+								if v.eql? out_link_ip
+									ss = k
+								end
+							end
+						#puts "send "+content+" from "+source+ " to "+destination
+						msg = ""
+						msg << source << "&"<< destination << "&PINGBACK&"<<content<<"&"<<num_pings.to_s<<"&"<<delay.to_s
+						num_pings.times do
+							time_last_pingback = Time.now
+							loop do
+								if Time.now - time_last_pingback > delay
+									break
+								end
+							end
+							ss.send(msg, 0, MULTICAST_ADDR, PORT)
+						end
+
+					else
+						#puts source
+						#puts all_paths_all_ips.inspect
+						path = all_paths_all_ips[first_ip][destination]
+						out_link_ip = ""
+						path.each_with_index do |p,index|
+							if !send_sockets.has_value? p
+								out_link_ip = path[index-1]
+								break
+							end
+						end
+						send_sockets.each do |k,v|
+							if v.eql? out_link_ip
+								ss = k
+							end
+						end
+						#puts "send "+content+" from "+source+ " to "+destination
+						ss.send(msg_recv[0], 0, MULTICAST_ADDR, PORT)		
+					end	
+				end
+				if is_pingback
+					ss,first_ip = send_sockets.first
+
+					if send_sockets.has_value?(destination)
+						puts "PING FROM " + source
+					else
+						#puts source
+						#puts all_paths_all_ips.inspect
+						path = all_paths_all_ips[first_ip][destination]
+						out_link_ip = ""
+						path.each_with_index do |p,index|
+							if !send_sockets.has_value? p
+								out_link_ip = path[index-1]
+								break
+							end
+						end
+						send_sockets.each do |k,v|
+							if v.eql? out_link_ip
+								ss = k
+							end
+						end
+						#puts "send "+content+" from "+source+ " to "+destination
+						ss.send(msg_recv[0], 0, MULTICAST_ADDR, PORT)		
+					end	
+				end
+			end
+			#puts "flood_table start:"
+			#puts flood_table.inspect
+			#puts "flood_table end"
+			
+			#puts "-------------------------------------------------------------"
+			
+			send_sockets.each do |ss, ip|
+				graph = Graph.new(ip,flood_table);
+				graph.ReadConfig
+				graph.Dijkstra
+				all_paths= graph.shortest_paths
+				all_paths_all_ips[ip] = all_paths
+			#	puts "shortest paths from #{ip} to all other ip"
+			#	all_paths.each do |k,v|
+			#		print "to #{k}: "
+			#		puts v.inspect
+			#	end
+			#	puts "#{ip} shortest paths finished"
+			end
+			#puts "--------------------------------------------------------------"
+		elsif results[0].include? ARGF
+
+			a = ARGF.gets 
+			if a =~ /SENDMSG\s+([0-9]+.[0-9]+.[0-9]+.[0-9]+)\s+(\w+)/
+				destination = $1
+				content = $2
+				ss,source = send_sockets.first
+				msg = ""
+				msg << source << "&"<< destination << "&SENDMSG&"<< content
+				if send_sockets.has_value?(destination)
+					puts "recieved " + content + " from " + source
+				else
+					#puts all_paths_all_ips.inspect
+					path = all_paths_all_ips[source][destination]
+					out_link_ip = ""
+					path.each_with_index do |p,index|
+						if !send_sockets.has_value? p
+							out_link_ip = path[index-1]
+							break
+						end
+					end
+					send_sockets.each do |k,v|
+						if v.eql? out_link_ip
+							ss = k
+						end
+					end
+					puts "send "+content+" from "+source+ " to "+destination
+					ss.send(msg, 0, MULTICAST_ADDR, PORT)		
+				end	
+			#PING [DST] [NUMPINGS] [DELAY]
+			elsif a =~ /PING\s+([0-9]+.[0-9]+.[0-9]+.[0-9]+)\s+(\d+)\s+(\d+)/
+				destination = $1
+				num_pings = $2.to_i
+				delay = $3.to_i
+				ss,source = send_sockets.first
+				
+				content="empty"
+				msg = ""
+				msg << source << "&"<< destination << "&PING&"<<content<<"&"<<num_pings.to_s<<"&"<<delay.to_s
+				if send_sockets.has_value?(destination)
+					while(num_pings>0) do
+						time_last_ping = Time.now
+						loop do
+							if Time.now - time_last_ping > delay
+								break
+							end
+						end
+						puts "ping from #{destination}"
+						num_pings=num_pings-1
+					end
+				else
+					#puts all_paths_all_ips.inspect
+					path = all_paths_all_ips[source][destination]
+					if path==nil
+						puts "unreachable ip #{destination}"
+					else
+						out_link_ip = ""
+						path.each_with_index do |p,index|
+							if !send_sockets.has_value? p
+								out_link_ip = path[index-1]
+								break
+							end
+						end
+						send_sockets.each do |k,v|
+							if v.eql? out_link_ip
+								ss = k
+							end
+						end
+						#puts "send ping "+" from "+source+ " to "+destination
+						ss.send(msg, 0, MULTICAST_ADDR, PORT)
+					end		
+				end	
+
+			#TRACEROUTE [DST]
+			elsif a =~ /TRACEROUTE\s+([0-9]+.[0-9]+.[0-9]+.[0-9]+)/
+				node.TraceRoute($1, $2, $3)
+			#recieve from socket
 			end
 		end
-		#puts "flood_table start:"
-		#puts flood_table.inspect
-		#puts "flood_table end"
-		
-		puts "-------------------------------------------------------------"
-		send_sockets.each do |ss, ip|
-			graph = Graph.new(ip,flood_table);
-			graph.ReadConfig
-			graph.Dijkstra
-			a = graph.shortest_paths
-			puts "shortest paths from #{ip} to all other ip"
-			a.each do |k,v|
-				print "to #{k}: "
-				puts v.inspect
-			end
-			puts "#{ip} shortest paths finished"
-		end
-		puts "--------------------------------------------------------------"
 	end
 end
 

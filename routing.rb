@@ -15,7 +15,7 @@ send_sockets={}
 arr.each do |i|
 	if(i.ipv4?)
 		sendSocket = UDPSocket.open
-		sendSocket.setsockopt(:SOL_SOCKET, :SO_REUSEPORT, 1)
+		sendSocket.setsockopt(:SOL_SOCKET, :SO_REUSEADDR, 1)
 		if(sendSocket.setsockopt(:IPPROTO_IP, :IP_MULTICAST_TTL, 1)<0)
 			puts "set socket failed"
 		end
@@ -34,7 +34,7 @@ recvSocket = UDPSocket.new
 membership = IPAddr.new(MULTICAST_ADDR).hton + IPAddr.new(BIND_ADDR).hton
 
 recvSocket.setsockopt(:IPPROTO_IP, :IP_ADD_MEMBERSHIP, membership)
-recvSocket.setsockopt(:SOL_SOCKET, :SO_REUSEPORT, 1)
+recvSocket.setsockopt(:SOL_SOCKET, :SO_REUSEADDR, 1)
 
 recvSocket.bind(BIND_ADDR, PORT)
 
@@ -256,21 +256,25 @@ loop do
 				else
 					#puts all_paths_all_ips.inspect
 					path = all_paths_all_ips[source][destination]
-					out_link_ip = ""
-					path.each_with_index do |p,index|
-						if !send_sockets.has_value? p
-							out_link_ip = path[index-1]
-							break
+					if path
+						out_link_ip = ""
+						path.each_with_index do |p,index|
+							if !send_sockets.has_value? p
+								out_link_ip = path[index-1]
+								break
+							end
 						end
-					end
-					send_sockets.each do |k,v|
-						if v.eql? out_link_ip
-							ss = k
+						send_sockets.each do |k,v|
+							if v.eql? out_link_ip
+								ss = k
+							end
 						end
-					end
-					puts "send "+content+" from "+source+ " to "+destination
-					ss.send(msg, 0, MULTICAST_ADDR, PORT)		
-				end	
+						puts "send "+content+" from "+source+ " to "+destination
+						ss.send(msg, 0, MULTICAST_ADDR, PORT)		
+					else
+						puts "SENDMSG ERROR: HOST UNREACHABLE"
+					end	
+				end
 			#PING [DST] [NUMPINGS] [DELAY]
 			elsif a =~ /PING\s+([0-9]+.[0-9]+.[0-9]+.[0-9]+)\s+(\d+)\s+(\d+)/
 				destination = $1
@@ -296,7 +300,7 @@ loop do
 					#puts all_paths_all_ips.inspect
 					path = all_paths_all_ips[source][destination]
 					if path==nil
-						puts "unreachable ip #{destination}"
+						puts "PING ERROR: #{destination} UNREACHABLE"
 					else
 						out_link_ip = ""
 						path.each_with_index do |p,index|
